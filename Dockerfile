@@ -1,10 +1,10 @@
 FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04 AS base
 
-ENV DEBIAN_FRONTEND noninteractive
-ENV DEBCONF_NONINTERACTIVE_SEEN true
-ENV LANG C.UTF-8
-ENV LC_ALL C.UTF-8
-ENV ROS_DISTRO noetic
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBCONF_NONINTERACTIVE_SEEN=true
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV ROS_DISTRO=noetic
 
 RUN \
     # Update nvidia GPG key
@@ -65,5 +65,5 @@ RUN apt-get update && apt-get install -y python3-tk
 
 WORKDIR /
 SHELL ["bash", "--command"]
-ENV SHELL /usr/bin/bash
+ENV SHELL=/usr/bin/bash
 CMD ["bash"]
