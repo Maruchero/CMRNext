@@ -1,18 +1,11 @@
-FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04 AS base
+# FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04 AS base
+FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
-ENV DEBIAN_FRONTEND noninteractive
-ENV DEBCONF_NONINTERACTIVE_SEEN true
-ENV LANG C.UTF-8
-ENV LC_ALL C.UTF-8
-ENV ROS_DISTRO noetic
-
-RUN \
-    # Update nvidia GPG key
-    rm /etc/apt/sources.list.d/cuda.list && \
-    apt-key del 7fa2af80 && \
-    apt-get update && apt-get install -y --no-install-recommends wget && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
-    dpkg -i cuda-keyring_1.0-1_all.deb
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBCONF_NONINTERACTIVE_SEEN=true
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV ROS_DISTRO=noetic
 
 # preseed tzdata, update package index, upgrade packages and install needed software
 RUN truncate -s0 /tmp/preseed.cfg; \
@@ -22,12 +15,36 @@ RUN truncate -s0 /tmp/preseed.cfg; \
     rm -f /etc/timezone /etc/localtime && \
     apt-get update && \
     apt-get install -y tzdata
-RUN apt-get update && apt-get install -y unzip nano build-essential git byobu curl xclip make cmake
-RUN apt-get update && apt-get install -y unzip nano build-essential git byobu curl xclip python3 python3-pip make cmake
+RUN apt-get update && apt-get install -y \
+    unzip \
+    nano \
+    build-essential \
+    git \
+    byobu \
+    curl \
+    wget \
+    xclip \
+    python3 \
+    python3-pip \
+    make \
+    cmake \
+    libeigen3-dev
 
 # Additional dependencies for CMRNext
-RUN pip3 install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
-RUN pip3 install numpy==1.20.3 scikit-image pyquaternion tqdm python-dateutil==2.8.2 open3d pillow==10.3.0 mathutils==2.81.2
+# RUN pip3 install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+RUN apt-get update && apt-get install -y python3-pip && \
+    pip3 install torch==1.13.1+cu117 \
+                 torchvision==0.14.1+cu117 \
+                 torchaudio==0.13.1+cu117 \
+                 --extra-index-url https://download.pytorch.org/whl/cu117
+RUN pip3 install --no-cache-dir \
+    numpy \
+    scikit-image \
+    pyquaternion \
+    tqdm \
+    python-dateutil==2.8.2 \
+    open3d \
+    pillow
 
 WORKDIR /root/opencv
 RUN wget https://github.com/opencv/opencv/archive/4.7.0.zip
@@ -64,5 +81,5 @@ RUN apt-get update && apt-get install -y python3-tk
 
 WORKDIR /
 SHELL ["bash", "--command"]
-ENV SHELL /usr/bin/bash
+ENV SHELL=/usr/bin/bash
 CMD ["bash"]

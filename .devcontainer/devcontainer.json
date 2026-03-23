@@ -1,0 +1,29 @@
+{
+    "name": "CMRNext-Dev",
+    "build": {
+        "dockerfile": "../Dockerfile",
+        "context": ".."
+    },
+    "runArgs": [
+        "--runtime=nvidia",
+        "--shm-size=2g",
+        "--net=host",
+        "-e", "DISPLAY=${env:DISPLAY}",
+        "-e", "XAUTHORITY=${env:XAUTHORITY}",
+        "-e", "NVIDIA_DRIVER_CAPABILITIES=all",
+        "-v", "/tmp/.X11-unix:/tmp/.X11-unix"
+    ],
+    "mounts": [
+        "source=../../data/,target=/data,type=bind"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylint"
+            ]
+        }
+    },
+    "remoteUser": "root",
+    "workspaceFolder": "/root/CMRNext"
+}
