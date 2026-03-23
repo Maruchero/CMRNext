@@ -14,7 +14,7 @@
         "-v", "/tmp/.X11-unix:/tmp/.X11-unix"
     ],
     "mounts": [
-        "source=../../data/,target=/data,type=bind"
+        "source=../data/,target=/data,type=bind"
     ],
     "customizations": {
         "vscode": {
