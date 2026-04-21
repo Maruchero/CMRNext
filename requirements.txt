@@ -1,3 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cu117
+torch==1.13.1+cu117
+torchvision==0.14.1+cu117
+torchaudio==0.13.1+cu117
 scikit_image
 git+https://gitlab.com/jixingcn/blender-mathutils.git
 git+https://github.com/scaleapi/pandaset-devkit.git#subdirectory=python

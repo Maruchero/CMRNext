@@ -30,13 +30,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     libeigen3-dev
 
-# Additional dependencies for CMRNext
-# RUN pip3 install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
-RUN apt-get update && apt-get install -y python3-pip && \
-    pip3 install torch==1.13.1+cu117 \
-                 torchvision==0.14.1+cu117 \
-                 torchaudio==0.13.1+cu117 \
-                 --extra-index-url https://download.pytorch.org/whl/cu117
+# Additional dependencies for CMRNext are now handled via requirements.txt
 RUN pip3 install --no-cache-dir \
     numpy \
     scikit-image \
@@ -60,8 +54,14 @@ RUN mkdir -p build && cd build && cmake -DOPENCV_EXTRA_MODULES_PATH=/root/opencv
 RUN cd build && cmake --build . -j $(nproc)
 RUN cd build && make install
 
+RUN apt-get update && apt-get install -y python3-pip && \
+    pip3 install torch==1.13.1+cu117 \
+                 torchvision==0.14.1+cu117 \
+                 torchaudio==0.13.1+cu117 \
+                 --extra-index-url https://download.pytorch.org/whl/cu117
 
-RUN pip3 install torch-scatter torch-sparse==0.6.13 -f https://data.pyg.org/whl/torch-1.11.0+cu113
+# Install torch-scatter and torch-sparse matching torch 1.13.1+cu117
+RUN pip3 install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
 RUN pip3 install --no-deps git+https://github.com/argoverse/argoverse-api.git
 RUN apt-get update && apt-get install -y libgl1
 COPY ./ /root/CMRNext
