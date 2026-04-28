@@ -8,7 +8,7 @@ scipy
 pyquaternion
 kornia
 Pillow
-wandb
+wandb==0.16.6
 pyntcloud
 git+https://github.com/utiasSTARS/liegroups
 geomstats
