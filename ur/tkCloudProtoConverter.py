@@ -100,6 +100,8 @@ def protoCloudToNumpy(msg):
     data = np.frombuffer(msg.data, dtype=POINT_IDX[msg.type], count=msg.height)
     fields = [name for name in data.dtype.names if 'stride' not in name]
     return np.array([[float(x) for x in tup] for tup in data[fields]])
+## BUG: this converts everything to float64.
+## Solution: np.stack([points[tup] for tup in fields], axis=-1) to preserve original types
 
 
 def typeToPoint(typept):
@@ -107,8 +109,8 @@ def typeToPoint(typept):
 
 
 def protoCloudToPcdFile(msg):
-    points = protoCloudToNumpy(msg)
-    xyz = points[:, :3].tobytes()
+    data = np.frombuffer(msg.data, dtype=POINT_IDX[msg.type], count=msg.height)
+    xyz = np.stack([data['x'], data['y'], data['z']], axis=-1).tobytes()
 	# All the pointcloud types have x y z fields and they are all 4 bytes
     return (
         "# .PCD v0.7 - Point Cloud Data file format\n"
