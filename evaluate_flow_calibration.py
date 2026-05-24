@@ -27,6 +27,8 @@ from models.get_model import get_model
 from quaternion_distances import quaternion_loss
 
 import matplotlib
+
+from ur.plot_bev_correspondences import plot_bev_camera_correspondences
 matplotlib.use('TkAgg')
 
 import matplotlib.pyplot as plt
@@ -440,7 +442,8 @@ def evaluate_calibration(_config, seed):
             valid_indexes2 = torch.ones(new_uv.shape[0], dtype=torch.bool).cuda()
 
             new_uv = new_uv[valid_indexes2]
-
+            
+            # --- PREPARE DATA FOR PnP ---
             points_2d = new_uv.cpu().numpy()
             obj_coord = points_3D[valid_indexes][valid_indexes2][:, :3].cpu().numpy()
             obj_coord_zforward = np.zeros(obj_coord.shape)
@@ -470,15 +473,41 @@ def evaluate_calibration(_config, seed):
                     obj_coord_zforward = obj_coord_zforward[corr_to_keep[:num_corr_to_keep]]
 
             # Predict relative transformation based on CMRNext correspondences
-            # for iterative refinement
             cuda_pnp = cv2.pythoncuda.cudaPnP(obj_coord_zforward.astype(np.float32).copy(),
                                               points_2d.astype(np.float32).copy(), obj_coord_zforward.shape[0],
-                                              200, 2., cam_mat.astype(np.float32)
-                                              )
+                                              200, 2., cam_mat.astype(np.float32))
+
+            # --- EXTRACT MODEL-ASSOCIATED INLIERS START ---
+            # Extract local inlier indexes from the cudaPnP output matrix
+            local_inliers = cuda_pnp[0, 6:].astype(int)
+            local_inliers = local_inliers[local_inliers >= 0] # drop padding -1s
+
+            # Extract the raw 3D LiDAR points
+            assoc_3d_lidar = obj_coord_zforward[local_inliers]
+            
+            # Extract the EXACT 2D pixels the deep learning model assigned them to
+            assoc_2d_predicted_pixel = points_2d[local_inliers]
+            # --- EXTRACT MODEL-ASSOCIATED INLIERS END ---
 
             transl = cuda_pnp[0, [0, 1, 2]]
             rot_mat = cuda_pnp[:, 3:6].T
             rot_mat, _ = cv2.Rodrigues(rot_mat)
+            # object_points = obj_coord_zforward.astype(np.float32).copy()
+            # image_points = points_2d.astype(np.float32).copy()
+            # camera_matrix = cam_mat.astype(np.float32).copy()
+            # dist_coeffs = np.array([-0.4169764302228503, 0.2032754719673925, 0.002265081048171727, -0.002142515738492578, 0], dtype=np.float32)
+            # success, rvec, tvec, inliers = cv2.solvePnPRansac(
+            #     object_points,
+            #     image_points,
+            #     camera_matrix,
+            #     dist_coeffs,
+            #     iterationsCount=1000,
+            #     reprojectionError=3.0,
+            #     confidence=0.99,
+            #     flags=cv2.SOLVEPNP_ITERATIVE
+            # )
+            # transl = tvec.squeeze()
+            # rot_mat, _ = cv2.Rodrigues(rvec)
 
             torch.cuda.synchronize()
             time2 = time.time()
@@ -565,7 +594,7 @@ def evaluate_calibration(_config, seed):
 
             rgb_input = rgb.unsqueeze(0)
             lidar_input = depth_img_no_occlusion.unsqueeze(0)
-
+            
             if _config['viz'] and iteration == len(_config['weights']) - 1:
                 gt_uv, gt_depth, _, _ = cam_model.project_pytorch(rotated_point_cloud, real_shape, reflectance)
                 gt_uv = gt_uv.t().int().contiguous()
@@ -592,6 +621,14 @@ def evaluate_calibration(_config, seed):
                 axarr[1].imshow(viz_final)
                 plt.draw()
                 plt.pause(5)
+                
+                # --- CALL THE ASSOCIATION PLOTTER ---
+                plot_bev_camera_correspondences(
+                    inlier_pc=assoc_3d_lidar, 
+                    rgb_tensor=sample['rgb'][idx], 
+                    inlier_uv=assoc_2d_predicted_pixel, 
+                    max_dist=_config['max_depth'] 
+                )
 
             try:
                 if _config['dataset'] != 'custom':
