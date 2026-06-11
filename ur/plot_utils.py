@@ -454,7 +454,7 @@ def visualize_bev_image(
     img_aspect = W / H
     gs = fig.add_gridspec(
         1, 2,
-        width_ratios=[1, 1],   # 50/50 split
+        width_ratios=[1, 2],   # 1/3 BEV, 2/3 image
         wspace=0.06,
         left=0.04, right=0.97,
         top=0.95, bottom=0.05,
@@ -494,7 +494,7 @@ def visualize_bev_image(
 
     ax_bev.set_xlim(-max_range, max_range)
     ax_bev.set_ylim(-2, max_range)
-    ax_bev.set_aspect('equal')
+    # No set_aspect('equal') — let the BEV fill all available vertical space
     ax_bev.set_xlabel('← right  |  left →', color='#aaaaaa', fontsize=8)
     ax_bev.set_ylabel('Forward (m)', color='#aaaaaa', fontsize=8)
     ax_bev.tick_params(colors='#888888', labelsize=7)
@@ -508,16 +508,15 @@ def visualize_bev_image(
     cb.ax.yaxis.set_tick_params(color='#888888', labelcolor='#888888', labelsize=7)
 
     # ------------------------------------------------------------------ #
-    # 8. Image panel                                                      #
+    # 8. Image panel — preserve correct image aspect ratio               #
     # ------------------------------------------------------------------ #
-    ax_img.imshow(img_np, interpolation='bilinear', aspect='auto')
-    ax_img.set_xlim(0, W)
-    ax_img.set_ylim(H, 0)
+    ax_img.set_facecolor('#0d0d0d')
+    ax_img.imshow(img_np, interpolation='bilinear', aspect='equal', zorder=1)
     ax_img.set_axis_off()
     ax_img.set_title('Camera image (flow-corrected targets)', color='#cccccc',
                      fontsize=9, pad=4)
 
-    # All corrected targets — tiny dots
+    # All corrected targets — tiny dots (imshow sets axes to pixel coords 0..W, 0..H)
     ax_img.scatter(
         v_uv_corr[:, 0], v_uv_corr[:, 1],
         c=colors_all, s=2, marker=',', linewidths=0, alpha=0.45, zorder=2,
@@ -530,11 +529,12 @@ def visualize_bev_image(
     )
 
     # ------------------------------------------------------------------ #
-    # 9. Cross-panel ConnectionPatch lines                                #
+    # 9. Cross-panel lines drawn in figure coordinates AFTER layout      #
     # ------------------------------------------------------------------ #
-    # Add lines AFTER all scatter calls so they sit on top.
-    # clip_on=False is essential — without it each patch is clipped to its
-    # source axis bounding box and disappears over the plot content.
+    # Force the layout engine to finalize axis positions so transData →
+    # transFigure conversions are accurate.
+    fig.canvas.draw()
+
     from matplotlib.patches import ConnectionPatch
     for i in range(n_draw):
         con = ConnectionPatch(
@@ -542,12 +542,12 @@ def visualize_bev_image(
             xyB=(s_dst_uv[i, 0], s_dst_uv[i, 1]), coordsB=ax_img.transData,
             color=(*colors_sample[i][:3], 0.75),
             linewidth=1.0,
-            zorder=10,       # above scatter content in both axes
-            clip_on=False,   # don't clip to either axis boundary
+            zorder=10,
+            clip_on=False,
         )
-        # Adding to ax_bev (rather than fig) ensures it respects the axes
-        # stacking order and renders on top of the plot content.
-        ax_bev.add_artist(con)
+        # Add to ax_img so the line is drawn in the image axes layer,
+        # which renders on top of the image content in ax_img.
+        ax_img.add_artist(con)
 
     # ------------------------------------------------------------------ #
     # 10. Legend                                                          #
@@ -560,10 +560,11 @@ def visualize_bev_image(
         plt.Line2D([0], [0], color='white', linewidth=0, marker='+',
                    markersize=8, markeredgewidth=1.5, label='Ego origin'),
     ]
-    fig.legend(
+    leg = fig.legend(
         handles=legend_elements, loc='lower center', ncol=4, fontsize=8,
         framealpha=0.4, facecolor='#1a1a1a', labelcolor='white',
         bbox_to_anchor=(0.5, -0.04),
     )
+    leg.set_zorder(1)  # behind the connection lines (zorder=10)
 
     return fig

@@ -408,7 +408,20 @@ def evaluate_calibration(_config, seed):
 
             up_flow = predicted_flow[-1]
             
+            ## CORRESPONDENCE VISUALIZATION 1
             up_flow_hw2 = predicted_flow[-1][0].permute(1, 2, 0)  # (H, W, 2)
+            fig = visualize_correspondences(
+                rgb=sample['rgb'][idx],
+                uv=uv,
+                up_flow=up_flow_hw2,
+                flow_mask=flow_mask,
+                n_samples=80,
+                uncertainty=predicted_uncertainty[-1][0].sum(0) if _config['uncertainty'] else None,
+                normalize_images=_config['normalize_images'],
+                title=f"Iteration {iteration+1} - batch {batch_idx}",
+                seed=42,
+            )
+            plt.show(block=False)
 
             # EPE
             gt = flow_img.clone().permute(2, 0, 1)
@@ -420,13 +433,14 @@ def evaluate_calibration(_config, seed):
 
             new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
 
+            ## CORRESPONDENCE VISUALIZATION 2
             fig = visualize_bev_image(
                 rgb=sample['rgb'][idx],
                 points_3d=points_3D,
                 uv=uv,
                 uv_corrected=new_uv,
                 normalize_images=_config['normalize_images'],
-                title=f"Iteration {iteration+1} – batch {batch_idx}",
+                title=f"Iteration {iteration+1} - batch {batch_idx}",
             )
             plt.show(block=False)
             plt.pause(0.1)
