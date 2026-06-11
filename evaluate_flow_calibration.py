@@ -30,7 +30,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 import matplotlib.pyplot as plt
-from ur.plot_utils import plot_dense_depth_map, visualize_correspondences
+from ur.plot_utils import plot_dense_depth_map, visualize_bev_image, visualize_correspondences
 from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,
                    quaternion_from_matrix, EndPointError, rotate_forward, quaternion_median,
                    average_quaternions, rotate_back, quaternion_mode, str2bool, overlay_imgs)
@@ -383,6 +383,7 @@ def evaluate_calibration(_config, seed):
             rgb_input.append(rgb)
             lidar_input.append(depth_img_no_occlusion)
 
+        point_cloud = torch.stack(sample['point_cloud'])
         lidar_input = torch.stack(lidar_input)
         rgb_input = torch.stack(rgb_input)
 
@@ -409,19 +410,6 @@ def evaluate_calibration(_config, seed):
             
             up_flow_hw2 = predicted_flow[-1][0].permute(1, 2, 0)  # (H, W, 2)
 
-            fig = visualize_correspondences(
-                rgb=sample['rgb'][idx],
-                uv=uv,
-                up_flow=up_flow_hw2,
-                flow_mask=flow_mask,
-                n_samples=80,
-                uncertainty=predicted_uncertainty[-1][0].sum(0) if _config['uncertainty'] else None,
-                normalize_images=_config['normalize_images'],
-                title=f"Iteration {iteration+1} – batch {batch_idx}",
-                seed=42,
-            )
-            plt.show(block=False)
-
             # EPE
             gt = flow_img.clone().permute(2, 0, 1)
             gt = torch.cat((gt, flow_mask.unsqueeze(0).float()))
@@ -431,6 +419,17 @@ def evaluate_calibration(_config, seed):
             up_flow = up_flow[0].permute(1, 2, 0)
 
             new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
+
+            fig = visualize_bev_image(
+                rgb=sample['rgb'][idx],
+                points_3d=points_3D,
+                uv=uv,
+                uv_corrected=new_uv,
+                normalize_images=_config['normalize_images'],
+                title=f"Iteration {iteration+1} – batch {batch_idx}",
+            )
+            plt.show(block=False)
+            plt.pause(0.1)
 
             valid_indexes = flow_mask[uv[:, 1], uv[:, 0]] == 1
 

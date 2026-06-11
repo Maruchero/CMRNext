@@ -301,3 +301,262 @@ def plot_dense_depth_map(depth_img_no_occlusion):
     plt.tight_layout()
     plt.show(block=False)
     plt.pause(0.1)
+
+
+def visualize_bev_image(
+    rgb: torch.Tensor,
+    points_3d: torch.Tensor,
+    uv: torch.Tensor,
+    uv_corrected: torch.Tensor,
+    n_samples: int = 40,
+    normalize_images: bool = True,
+    mean_torch: torch.Tensor = None,
+    std_torch: torch.Tensor = None,
+    title: str = "BEV ↔ Image Correspondences",
+    figsize: tuple = (20, 8),
+    max_range: float = None,
+    seed: int = None,
+) -> plt.Figure:
+    """
+    Split-panel visualization: LiDAR BEV (top-down, X-Z plane) on the left,
+    camera image on the right. Cross-panel lines connect each sampled 3D point
+    in the BEV to its predicted (flow-corrected) pixel position on the image.
+
+    Layout
+    ------
+    [  BEV (X-Z)  ] ----lines---- [  Camera image  ]
+
+    BEV conventions (camera frame, as returned by get_flow_zforward):
+      - Z axis → forward  (plotted upward along the vertical axis)
+      - X axis → right    (negated on screen so left=left)
+      - The camera/ego origin is at (0, 0), marked with a white cross.
+
+    Args:
+        rgb:              Image tensor, shape (3, H, W), float, any device.
+                          Raw [0,1] or ImageNet-normalised.
+        points_3d:        3-D point cloud in **camera frame**, shape (N, 3).
+                          Pass `points_3D[new_indexes]` from get_flow_zforward.
+                          Columns: [X_right, Y_down, Z_forward].
+        uv:               Initial projected pixel coords, shape (N, 2).
+                          Column-0 = x (width), column-1 = y (height).
+                          Must be aligned row-wise with points_3d.
+        uv_corrected:     Flow-corrected pixel coords, shape (N, 2).
+                          Pass `new_uv` from line 418 of evaluate_flow_calibration:
+                            new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
+                          Must be aligned row-wise with uv and points_3d.
+        n_samples:        Number of random points to link across panels.
+        normalize_images: Undo ImageNet normalisation on rgb if True.
+        mean_torch:       ImageNet mean, shape (3,). Default: [0.485,0.456,0.406].
+        std_torch:        ImageNet std,  shape (3,). Default: [0.229,0.224,0.225].
+        title:            Suptitle string.
+        figsize:          Figure size in inches (width, height).
+        max_range:        Clip BEV to ±max_range metres. Auto-computed if None.
+        seed:             RNG seed for reproducible sampling.
+
+    Returns:
+        fig: matplotlib Figure — call plt.show(block=False) / fig.savefig() on it.
+
+    Example
+    -------
+        # Inside the iteration loop, after line 418:
+        # new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
+        fig = visualize_bev_image(
+            rgb=sample['rgb'][idx],
+            points_3d=points_3D,            # points_3D[new_indexes] from get_flow_zforward
+            uv=uv,                          # (N, 2) initial pixel coords
+            uv_corrected=new_uv,            # (N, 2) flow-corrected pixel coords
+            normalize_images=_config['normalize_images'],
+            title=f"Iteration {iteration+1} – batch {batch_idx}",
+        )
+        plt.show(block=False)
+        plt.pause(0.1)
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    # ------------------------------------------------------------------ #
+    # 1. Decode RGB image                                                  #
+    # ------------------------------------------------------------------ #
+    if mean_torch is None:
+        mean_torch = torch.tensor([0.485, 0.456, 0.406])
+    if std_torch is None:
+        std_torch = torch.tensor([0.229, 0.224, 0.225])
+
+    img_np = rgb.detach().cpu().float()
+    if normalize_images:
+        img_np = img_np * std_torch.view(3, 1, 1).cpu() + mean_torch.view(3, 1, 1).cpu()
+    img_np = img_np.permute(1, 2, 0).numpy()
+    img_np = np.clip(img_np, 0.0, 1.0)
+    H, W = img_np.shape[:2]
+
+    # ------------------------------------------------------------------ #
+    # 2. To numpy                                                          #
+    # ------------------------------------------------------------------ #
+    pts_np      = points_3d.detach().cpu().numpy().astype(np.float32)    # (N, 3)
+    uv_np       = uv.detach().cpu().numpy().astype(np.float32)           # (N, 2)
+    uv_corr_np  = uv_corrected.detach().cpu().numpy().astype(np.float32) # (N, 2)
+
+    # ------------------------------------------------------------------ #
+    # 3. Filter: keep only points whose initial projection is in-image    #
+    # ------------------------------------------------------------------ #
+    xi = uv_np[:, 0].astype(int)
+    yi = uv_np[:, 1].astype(int)
+    valid = (xi >= 0) & (xi < W) & (yi >= 0) & (yi < H)
+
+    v_pts     = pts_np[valid]       # (M, 3)
+    v_uv      = uv_np[valid]        # (M, 2) — initial projection
+    v_uv_corr = uv_corr_np[valid]   # (M, 2) — flow-corrected target
+    M = v_pts.shape[0]
+    if M == 0:
+        raise ValueError("No valid LiDAR points found within image bounds.")
+
+    # BEV coordinates: camera frame — Z is forward, X is lateral (right)
+    bev_fwd = v_pts[:, 2]    # Z: forward
+    bev_lat = v_pts[:, 0]    # X: right (will be negated on plot so left=left)
+
+    # Distance from origin — used for colouring
+    dist = np.sqrt(bev_fwd ** 2 + bev_lat ** 2)
+
+    # ------------------------------------------------------------------ #
+    # 4. Sample subset for cross-panel links                              #
+    # ------------------------------------------------------------------ #
+    n_draw = min(n_samples, M)
+    chosen = np.array(random.sample(range(M), n_draw))
+
+    s_bev_fwd = bev_fwd[chosen]
+    s_bev_lat = bev_lat[chosen]
+    s_dist    = dist[chosen]
+    s_dst_uv  = v_uv_corr[chosen]  # flow-corrected image targets
+
+    # Colour by distance (turbo: blue=near, red=far)
+    cmap_dist = matplotlib.colormaps.get_cmap('turbo')
+    d_min, d_max = dist.min(), max(dist.max(), 1e-6)
+    norm_dist_all    = (dist   - d_min) / (d_max - d_min)
+    norm_dist_sample = (s_dist - d_min) / (d_max - d_min)
+    colors_all    = cmap_dist(norm_dist_all)
+    colors_sample = cmap_dist(norm_dist_sample)
+
+    # ------------------------------------------------------------------ #
+    # 5. BEV range                                                        #
+    # ------------------------------------------------------------------ #
+    if max_range is None:
+        max_range = float(np.percentile(dist, 98)) * 1.1
+    max_range = max(max_range, 1.0)
+
+    # ------------------------------------------------------------------ #
+    # 6. Figure layout                                                    #
+    # ------------------------------------------------------------------ #
+    fig = plt.figure(figsize=figsize, dpi=110)
+    fig.patch.set_facecolor('#1a1a1a')
+    fig.suptitle(title, color='white', fontsize=13, fontweight='bold', y=1.01)
+
+    img_aspect = W / H
+    gs = fig.add_gridspec(
+        1, 2,
+        width_ratios=[1, img_aspect],
+        wspace=0.06,
+        left=0.04, right=0.97,
+        top=0.95, bottom=0.05,
+    )
+    ax_bev = fig.add_subplot(gs[0])
+    ax_img = fig.add_subplot(gs[1])
+
+    # ------------------------------------------------------------------ #
+    # 7. BEV panel                                                        #
+    # ------------------------------------------------------------------ #
+    ax_bev.set_facecolor('#0d0d0d')
+    for spine in ax_bev.spines.values():
+        spine.set_edgecolor('#444444')
+
+    # All valid points
+    ax_bev.scatter(
+        -bev_lat, bev_fwd,
+        c=colors_all,
+        s=1.5, marker=',', linewidths=0, alpha=0.5, zorder=2,
+    )
+    # Sampled points
+    ax_bev.scatter(
+        -s_bev_lat, s_bev_fwd,
+        c=colors_sample,
+        s=28, marker='o', linewidths=0.6, edgecolors='white', alpha=0.95, zorder=3,
+    )
+    # Ego marker
+    ax_bev.scatter([0], [0], c='white', s=80, marker='+', linewidths=1.5, zorder=5)
+
+    # Range rings
+    for r in np.arange(10, max_range, 10):
+        circle = plt.Circle((0, 0), r, color='#333333', fill=False,
+                             linewidth=0.5, linestyle='--', zorder=1)
+        ax_bev.add_patch(circle)
+        ax_bev.text(0, r, f'{r:.0f}m', color='#666666', fontsize=6,
+                    ha='center', va='bottom', zorder=1)
+
+    ax_bev.set_xlim(-max_range, max_range)
+    ax_bev.set_ylim(-2, max_range)
+    ax_bev.set_aspect('equal')
+    ax_bev.set_xlabel('← left  |  right →', color='#aaaaaa', fontsize=8)
+    ax_bev.set_ylabel('Forward (m)', color='#aaaaaa', fontsize=8)
+    ax_bev.tick_params(colors='#888888', labelsize=7)
+    ax_bev.set_title('BEV (camera X-Z plane)', color='#cccccc', fontsize=9, pad=4)
+
+    sm_dist = plt.cm.ScalarMappable(
+        cmap=cmap_dist, norm=plt.Normalize(vmin=d_min, vmax=d_max))
+    sm_dist.set_array([])
+    cb = fig.colorbar(sm_dist, ax=ax_bev, fraction=0.046, pad=0.04, aspect=25)
+    cb.set_label('Distance (m)', color='#aaaaaa', fontsize=8)
+    cb.ax.yaxis.set_tick_params(color='#888888', labelcolor='#888888', labelsize=7)
+
+    # ------------------------------------------------------------------ #
+    # 8. Image panel                                                      #
+    # ------------------------------------------------------------------ #
+    ax_img.imshow(img_np, interpolation='bilinear', aspect='auto')
+    ax_img.set_xlim(0, W)
+    ax_img.set_ylim(H, 0)
+    ax_img.set_axis_off()
+    ax_img.set_title('Camera image (flow-corrected targets)', color='#cccccc',
+                     fontsize=9, pad=4)
+
+    # All corrected targets — tiny dots
+    ax_img.scatter(
+        v_uv_corr[:, 0], v_uv_corr[:, 1],
+        c=colors_all, s=2, marker=',', linewidths=0, alpha=0.45, zorder=2,
+    )
+    # Sampled targets — diamonds
+    ax_img.scatter(
+        s_dst_uv[:, 0], s_dst_uv[:, 1],
+        c=colors_sample, s=28, marker='D', linewidths=0.6,
+        edgecolors='white', alpha=0.95, zorder=3,
+    )
+
+    # ------------------------------------------------------------------ #
+    # 9. Cross-panel ConnectionPatch lines                                #
+    # ------------------------------------------------------------------ #
+    from matplotlib.patches import ConnectionPatch
+    for i in range(n_draw):
+        con = ConnectionPatch(
+            xyA=(-s_bev_lat[i], s_bev_fwd[i]), coordsA=ax_bev.transData,
+            xyB=(s_dst_uv[i, 0], s_dst_uv[i, 1]), coordsB=ax_img.transData,
+            color=(*colors_sample[i][:3], 0.55),
+            linewidth=0.9, zorder=0,
+        )
+        fig.add_artist(con)
+
+    # ------------------------------------------------------------------ #
+    # 10. Legend                                                          #
+    # ------------------------------------------------------------------ #
+    legend_elements = [
+        mpatches.Patch(color=cmap_dist(0.1), label=f'All LiDAR pts ({M})'),
+        mpatches.Patch(color=cmap_dist(0.6), label=f'Sampled pts ({n_draw}) + links'),
+        plt.Line2D([0], [0], color='white', linewidth=0, marker='D',
+                   markersize=5, label='Flow-corrected target'),
+        plt.Line2D([0], [0], color='white', linewidth=0, marker='+',
+                   markersize=8, markeredgewidth=1.5, label='Ego origin'),
+    ]
+    fig.legend(
+        handles=legend_elements, loc='lower center', ncol=4, fontsize=8,
+        framealpha=0.4, facecolor='#1a1a1a', labelcolor='white',
+        bbox_to_anchor=(0.5, -0.04),
+    )
+
+    return fig
