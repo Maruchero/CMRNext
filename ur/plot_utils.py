@@ -6,7 +6,7 @@ import matplotlib
 import matplotlib.patches as mpatches
 from matplotlib.collections import LineCollection
  
- 
+
 def visualize_correspondences(
     rgb: torch.Tensor,
     uv: torch.Tensor,
@@ -22,15 +22,18 @@ def visualize_correspondences(
     seed: int = None,
 ) -> plt.Figure:
     """
-    Visualize random LiDAR-to-image correspondences predicted by CMRNext (RAFT).
- 
+    Visualize LiDAR-to-image correspondences predicted by CMRNext (RAFT).
+    
+    All valid LiDAR points are shown as small dots. A random subset of these
+    points also displays flow vectors (arrows/lines) to the corrected positions.
+    
     For each sampled LiDAR point:
       - A circle marks the projected source position (where the point lands
         under the *initial*, possibly miscalibrated, extrinsic).
       - An arrow (or line) shows the predicted flow displacement to the
         corrected pixel position.
       - Colors encode the displacement magnitude (colormap: plasma).
- 
+    
     Args:
         rgb:              Image tensor, shape (3, H, W), float, on any device.
                           May be either raw [0,1] or ImageNet-normalized.
@@ -39,7 +42,7 @@ def visualize_correspondences(
         up_flow:          Predicted flow from the network, shape (H, W, 2),
                           float, same device as uv.
         flow_mask:        Binary mask of valid LiDAR pixels, shape (H, W), int.
-        n_samples:        How many random correspondences to draw.
+        n_samples:        How many random correspondences to draw flow lines for.
         uncertainty:      Optional per-pixel uncertainty, shape (H, W).
                           When provided, point alpha is modulated by confidence.
         normalize_images: If True, un-normalize rgb using mean/std before display.
@@ -54,21 +57,6 @@ def visualize_correspondences(
     Returns:
         fig: The matplotlib Figure object (caller can call plt.show() or
              fig.savefig() on it).
- 
-    Example usage inside evaluate_calibration(), after the model forward pass:
- 
-        up_flow_hw2 = predicted_flow[-1][0].permute(1, 2, 0)  # (H, W, 2)
-        fig = visualize_correspondences(
-            rgb=sample['rgb'][idx],
-            uv=uv,
-            up_flow=up_flow_hw2,
-            flow_mask=flow_mask,
-            n_samples=80,
-            uncertainty=predicted_uncertainty[-1][0].sum(0) if _config['uncertainty'] else None,
-            normalize_images=_config['normalize_images'],
-        )
-        plt.show()
-        # or: fig.savefig(f"correspondences_{batch_idx}.png", dpi=150, bbox_inches="tight")
     """
     if seed is not None:
         random.seed(seed)
@@ -106,9 +94,9 @@ def visualize_correspondences(
         unc_np = uncertainty.detach().cpu().float().numpy()        # (H, W)
  
     # ------------------------------------------------------------------ #
-    # 3. Select valid LiDAR points and sample randomly                    #
+    # 3. Select valid LiDAR points                                        #
     # ------------------------------------------------------------------ #
-    # Only keep points that (a) are within image bounds and (b) have a
+    # Keep all points that (a) are within image bounds and (b) have a
     # valid entry in the flow mask.
     valid = (
         (uv_np[:, 0] >= 0) & (uv_np[:, 0] < W) &
@@ -116,37 +104,48 @@ def visualize_correspondences(
         mask_np[uv_np[:, 1].astype(int), uv_np[:, 0].astype(int)]
     )
     valid_uv = uv_np[valid]  # (M, 2)
+    M = valid_uv.shape[0]
  
-    if valid_uv.shape[0] == 0:
+    if M == 0:
         raise ValueError("No valid LiDAR points found in flow_mask.")
  
-    n_draw = min(n_samples, valid_uv.shape[0])
-    chosen = np.array(random.sample(range(valid_uv.shape[0]), n_draw))
+    # Get flow for ALL valid points (for coloring all source points)
+    src_x_all = valid_uv[:, 0].astype(int)
+    src_y_all = valid_uv[:, 1].astype(int)
+    dx_all = flow_np[src_y_all, src_x_all, 0]
+    dy_all = flow_np[src_y_all, src_x_all, 1]
+    magnitudes_all = np.sqrt(dx_all ** 2 + dy_all ** 2)
+ 
+    # ------------------------------------------------------------------ #
+    # 4. Sample a random subset for flow line visualization               #
+    # ------------------------------------------------------------------ #
+    n_draw = min(n_samples, M)
+    chosen = np.array(random.sample(range(M), n_draw))
+    
     src_pts = valid_uv[chosen]  # (n_draw, 2) — source: x, y
- 
-    # ------------------------------------------------------------------ #
-    # 4. Look up the predicted flow for each sampled point                #
-    # ------------------------------------------------------------------ #
-    src_x = src_pts[:, 0].astype(int)
-    src_y = src_pts[:, 1].astype(int)
-    dx = flow_np[src_y, src_x, 0]  # (n_draw,)
-    dy = flow_np[src_y, src_x, 1]
- 
+    dx = dx_all[chosen]
+    dy = dy_all[chosen]
     dst_pts = src_pts + np.stack([dx, dy], axis=1)  # (n_draw, 2) — destination
- 
-    magnitudes = np.sqrt(dx ** 2 + dy ** 2)  # (n_draw,) — for color mapping
+    magnitudes = magnitudes_all[chosen]
  
     # ------------------------------------------------------------------ #
     # 5. Optionally derive per-point alpha from uncertainty               #
     # ------------------------------------------------------------------ #
-    alphas = np.ones(n_draw)
+    alphas_all = np.ones(M)
+    alphas_samples = np.ones(n_draw)
+    
     if unc_np is not None:
-        conf = unc_np[src_y, src_x]
+        conf_all = unc_np[src_y_all, src_x_all]
+        conf_samples = conf_all[chosen]
+        
         # Low uncertainty → high confidence → high alpha
-        conf_min, conf_max = conf.min(), conf.max()
-        if conf_max > conf_min:
-            alphas = 1.0 - (conf - conf_min) / (conf_max - conf_min)
-        alphas = np.clip(0.3 + 0.7 * alphas, 0.3, 1.0)
+        conf_min_all, conf_max_all = conf_all.min(), conf_all.max()
+        if conf_max_all > conf_min_all:
+            alphas_all = 1.0 - (conf_all - conf_min_all) / (conf_max_all - conf_min_all)
+            alphas_samples = 1.0 - (conf_samples - conf_min_all) / (conf_max_all - conf_min_all)
+        
+        alphas_all = np.clip(0.3 + 0.7 * alphas_all, 0.3, 1.0)
+        alphas_samples = np.clip(0.3 + 0.7 * alphas_samples, 0.3, 1.0)
  
     # ------------------------------------------------------------------ #
     # 6. Build the figure                                                  #
@@ -160,56 +159,77 @@ def visualize_correspondences(
     fig.patch.set_facecolor('#1a1a1a')
     ax.set_facecolor('#1a1a1a')
  
-    # Color map: map displacement magnitude → color
+    # Color map: map displacement magnitude → color (using all points for scaling)
     cmap = matplotlib.colormaps.get_cmap('plasma')
-    mag_min = magnitudes.min()
-    mag_max = max(magnitudes.max(), 1e-6)
-    norm_mag = (magnitudes - mag_min) / (mag_max - mag_min)
-    colors = cmap(norm_mag)  # (n_draw, 4) RGBA
+    mag_min = magnitudes_all.min()
+    mag_max = max(magnitudes_all.max(), 1e-6)
+    
+    # Colors for ALL source points
+    norm_mag_all = (magnitudes_all - mag_min) / (mag_max - mag_min)
+    colors_all = cmap(norm_mag_all)
+    
+    # Colors for sampled points (for lines and destination markers)
+    norm_mag_samples = (magnitudes - mag_min) / (mag_max - mag_min)
+    colors_samples = cmap(norm_mag_samples)
  
     # ------------------------------------------------------------------ #
-    # 7. Draw correspondences as lines + endpoint markers                 #
+    # 7. Draw ALL source points (small dots, no flow lines)               #
     # ------------------------------------------------------------------ #
-    # Build a LineCollection for efficiency
+    ax.scatter(
+        valid_uv[:, 0], valid_uv[:, 1],
+        c=colors_all,
+        s=8,  # Smaller size for background points
+        marker='o',
+        linewidths=0.3,
+        edgecolors='white',
+        alpha=alphas_all * 0.5,  # More transparent for background points
+        zorder=2,
+        label=f'LiDAR source ({M} pts)',
+    )
+ 
+    # ------------------------------------------------------------------ #
+    # 8. Draw flow lines and destination points for sampled subset        #
+    # ------------------------------------------------------------------ #
+    # Build a LineCollection for the sampled points
     segments = [
         [[sx, sy], [dx_, dy_]]
         for (sx, sy), (dx_, dy_) in zip(src_pts, dst_pts)
     ]
     lc = LineCollection(
         segments,
-        colors=[(*c[:3], a * 0.75) for c, a in zip(colors, alphas)],
+        colors=[(*c[:3], a * 0.9) for c, a in zip(colors_samples, alphas_samples)],
         linewidths=1.2,
-        zorder=2,
+        zorder=3,
     )
     ax.add_collection(lc)
  
-    # Source points (LiDAR projection under initial calib) — hollow circles
+    # Source points (highlighted) — slightly larger circles
     ax.scatter(
         src_pts[:, 0], src_pts[:, 1],
-        c=colors,
-        s=18,
+        c=colors_samples,
+        s=22,
         marker='o',
         linewidths=0.8,
         edgecolors='white',
-        alpha=alphas,
-        zorder=3,
-        label='LiDAR source',
+        alpha=alphas_samples,
+        zorder=4,
+        label=f'Highlighted source ({n_draw} pts)',
     )
  
     # Destination points (after applying predicted flow) — filled diamonds
     ax.scatter(
         dst_pts[:, 0], dst_pts[:, 1],
-        c=colors,
-        s=14,
+        c=colors_samples,
+        s=16,
         marker='D',
         linewidths=0,
-        alpha=alphas,
-        zorder=4,
+        alpha=alphas_samples,
+        zorder=5,
         label='Predicted target',
     )
  
     # ------------------------------------------------------------------ #
-    # 8. Colorbar and legend                                               #
+    # 9. Colorbar and legend                                               #
     # ------------------------------------------------------------------ #
     sm = plt.cm.ScalarMappable(
         cmap=cmap,
@@ -221,13 +241,15 @@ def visualize_correspondences(
     cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
  
     src_patch = mpatches.Patch(facecolor='none', edgecolor='white',
-                               linewidth=0.8, label=f'Source ({n_draw} pts)')
+                               linewidth=0.8, label=f'All source points ({M} pts)')
+    highlighted_patch = mpatches.Patch(facecolor='none', edgecolor='white',
+                                       linewidth=1.5, label=f'Flow vectors ({n_draw} pts)')
     dst_patch = mpatches.Patch(facecolor='white', edgecolor='none',
                                label='Predicted target')
     line_patch = mpatches.Patch(facecolor='none', edgecolor='grey',
                                 linewidth=1.0, label='Flow vector')
     ax.legend(
-        handles=[src_patch, dst_patch, line_patch],
+        handles=[src_patch, highlighted_patch, dst_patch, line_patch],
         loc='lower left',
         fontsize=8,
         framealpha=0.5,
