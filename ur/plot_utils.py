@@ -454,7 +454,7 @@ def visualize_bev_image(
     img_aspect = W / H
     gs = fig.add_gridspec(
         1, 2,
-        width_ratios=[1, img_aspect],
+        width_ratios=[1, 1],   # 50/50 split
         wspace=0.06,
         left=0.04, right=0.97,
         top=0.95, bottom=0.05,
@@ -471,13 +471,13 @@ def visualize_bev_image(
 
     # All valid points
     ax_bev.scatter(
-        -bev_lat, bev_fwd,
+        bev_lat, bev_fwd,
         c=colors_all,
         s=1.5, marker=',', linewidths=0, alpha=0.5, zorder=2,
     )
     # Sampled points
     ax_bev.scatter(
-        -s_bev_lat, s_bev_fwd,
+        s_bev_lat, s_bev_fwd,
         c=colors_sample,
         s=28, marker='o', linewidths=0.6, edgecolors='white', alpha=0.95, zorder=3,
     )
@@ -495,7 +495,7 @@ def visualize_bev_image(
     ax_bev.set_xlim(-max_range, max_range)
     ax_bev.set_ylim(-2, max_range)
     ax_bev.set_aspect('equal')
-    ax_bev.set_xlabel('← left  |  right →', color='#aaaaaa', fontsize=8)
+    ax_bev.set_xlabel('← right  |  left →', color='#aaaaaa', fontsize=8)
     ax_bev.set_ylabel('Forward (m)', color='#aaaaaa', fontsize=8)
     ax_bev.tick_params(colors='#888888', labelsize=7)
     ax_bev.set_title('BEV (camera X-Z plane)', color='#cccccc', fontsize=9, pad=4)
@@ -532,15 +532,22 @@ def visualize_bev_image(
     # ------------------------------------------------------------------ #
     # 9. Cross-panel ConnectionPatch lines                                #
     # ------------------------------------------------------------------ #
+    # Add lines AFTER all scatter calls so they sit on top.
+    # clip_on=False is essential — without it each patch is clipped to its
+    # source axis bounding box and disappears over the plot content.
     from matplotlib.patches import ConnectionPatch
     for i in range(n_draw):
         con = ConnectionPatch(
-            xyA=(-s_bev_lat[i], s_bev_fwd[i]), coordsA=ax_bev.transData,
+            xyA=(s_bev_lat[i], s_bev_fwd[i]), coordsA=ax_bev.transData,
             xyB=(s_dst_uv[i, 0], s_dst_uv[i, 1]), coordsB=ax_img.transData,
-            color=(*colors_sample[i][:3], 0.55),
-            linewidth=0.9, zorder=0,
+            color=(*colors_sample[i][:3], 0.75),
+            linewidth=1.0,
+            zorder=10,       # above scatter content in both axes
+            clip_on=False,   # don't clip to either axis boundary
         )
-        fig.add_artist(con)
+        # Adding to ax_bev (rather than fig) ensures it respects the axes
+        # stacking order and renders on top of the plot content.
+        ax_bev.add_artist(con)
 
     # ------------------------------------------------------------------ #
     # 10. Legend                                                          #
