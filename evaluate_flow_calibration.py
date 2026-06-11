@@ -30,6 +30,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 import matplotlib.pyplot as plt
+from ur.plot_utils import plot_dense_depth_map, visualize_correspondences
 from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,
                    quaternion_from_matrix, EndPointError, rotate_forward, quaternion_median,
                    average_quaternions, rotate_back, quaternion_mode, str2bool, overlay_imgs)
@@ -341,6 +342,7 @@ def evaluate_calibration(_config, seed):
             cam_params = sample['calib'][idx].cuda()
             depth_img_no_occlusion, uv, indexes, depth = prepare_input(cam_params, pc_rotated, real_shape,
                                                                        reflectance, _config)
+            # plot_dense_depth_map(depth_img_no_occlusion)
             cam_model = CameraModel()
             cam_model.focal_length = cam_params[:2]
             cam_model.principal_point = cam_params[2:]
@@ -404,6 +406,21 @@ def evaluate_calibration(_config, seed):
                                                                   mode='bilinear')
 
             up_flow = predicted_flow[-1]
+            
+            up_flow_hw2 = predicted_flow[-1][0].permute(1, 2, 0)  # (H, W, 2)
+
+            fig = visualize_correspondences(
+                rgb=sample['rgb'][idx],
+                uv=uv,
+                up_flow=up_flow_hw2,
+                flow_mask=flow_mask,
+                n_samples=80,
+                uncertainty=predicted_uncertainty[-1][0].sum(0) if _config['uncertainty'] else None,
+                normalize_images=_config['normalize_images'],
+                title=f"Iteration {iteration+1} – batch {batch_idx}",
+                seed=42,
+            )
+            plt.show(block=False)
 
             # EPE
             gt = flow_img.clone().permute(2, 0, 1)
